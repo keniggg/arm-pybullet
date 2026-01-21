@@ -594,10 +594,9 @@ def main():
     box_place_pos = [box_base_pos[0], box_base_pos[1], ball_radius + 0.02]
     place_angles = get_joint_angles_for_position(robot_id, box_place_pos)
     if place_angles:
-        move_arm_to_position(robot_id, place_angles[:len(controllable_joints)],
-                             controllable_joints, update_fn=update_all_displays)
+        move_arm_to_position(robot_id, place_angles[:len(controllable_joints)], controllable_joints)
 
-    step_simulation(60, update_fn=update_all_displays)
+    time.sleep(0.5)
 
     # 步骤8: 放下球
     print("步骤8: 放下球...")
@@ -614,7 +613,7 @@ def main():
     p.addUserDebugText("Step 9: Returning to home", [-0.5, 0, 0.95],
                      textColorRGB=[1, 1, 0], textSize=1.5, replaceItemUniqueId=status_id)
 
-    move_arm_to_position(robot_id, home_angles, controllable_joints, update_fn=update_all_displays)
+    move_arm_to_position(robot_id, home_angles, controllable_joints)
 
     p.addUserDebugText("Demo Complete! Close window to exit.", [-0.5, 0, 0.95],
                      textColorRGB=[0, 1, 0], textSize=1.5, replaceItemUniqueId=status_id)
