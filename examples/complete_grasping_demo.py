@@ -474,16 +474,20 @@ def main():
                                    textColorRGB=[1, 0, 0], textSize=1.2)
         force_display_ids.append(text_id)
 
+    display_frame = {"count": 0}
+
     def update_all_displays():
         if not p.isConnected():
             return
-        rgb_image = update_camera_view(robot_id, end_effector_link)
-        if rgb_image is not None:
-            p.addUserDebugText("Camera: Active", [0.5, 0.8, 0.9],
-                             textColorRGB=[0, 1, 0], textSize=1.2,
-                             replaceItemUniqueId=camera_display)
-        update_joint_display(robot_id, controllable_joints, joint_display_ids)
-        update_force_display(robot_id, gripper_joints, force_display_ids)
+        display_frame["count"] += 1
+        if display_frame["count"] % 5 == 0:
+            rgb_image = update_camera_view(robot_id, end_effector_link)
+            if rgb_image is not None:
+                p.addUserDebugText("Camera: Active", [0.5, 0.8, 0.9],
+                                 textColorRGB=[0, 1, 0], textSize=1.2,
+                                 replaceItemUniqueId=camera_display)
+            update_joint_display(robot_id, controllable_joints, joint_display_ids)
+            update_force_display(robot_id, gripper_joints, force_display_ids)
 
     # 启动时先刷新一次显示
     update_all_displays()
