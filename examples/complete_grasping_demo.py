@@ -50,7 +50,7 @@ def get_joint_angles_for_position(robot_id, target_pos, target_orn=None):
     return joint_angles
 
 
-def move_arm_to_position(robot_id, target_angles, controllable_joints, speed=1.0):
+def move_arm_to_position(robot_id, target_angles, controllable_joints, speed=1.0, update_fn=None):
     """
     平滑移动机械臂到指定关节角度
     """
@@ -91,6 +91,17 @@ def move_arm_to_position(robot_id, target_angles, controllable_joints, speed=1.0
                 positionGain=0.3
             )
 
+        if update_fn:
+            update_fn()
+        p.stepSimulation()
+        time.sleep(1.0 / 240.0)
+
+
+def step_simulation(steps, update_fn=None):
+    """运行指定步数的仿真并刷新显示。"""
+    for _ in range(steps):
+        if update_fn:
+            update_fn()
         p.stepSimulation()
         time.sleep(1.0 / 240.0)
 
@@ -107,7 +118,7 @@ def open_gripper(robot_id, gripper_joints, target_opening=0.08):
         )
 
 
-def close_gripper(robot_id, gripper_joints, force_threshold=2.0):
+def close_gripper(robot_id, gripper_joints, force_threshold=2.0, update_fn=None):
     """闭合夹爪直到检测到足够大的力 - 更保守的阈值"""
     max_force = 0
     step = 0
@@ -124,6 +135,8 @@ def close_gripper(robot_id, gripper_joints, force_threshold=2.0):
                 targetPosition=target_pos,
                 force=30  # 较小的力
             )
+        if update_fn:
+            update_fn()
         p.stepSimulation()
         time.sleep(1.0 / 240.0)
 
@@ -151,11 +164,35 @@ def close_gripper(robot_id, gripper_joints, force_threshold=2.0):
                 total_force = math.sqrt(fx**2 + fy**2 + fz**2)
                 max_force = max(max_force, total_force)
 
+        if update_fn:
+            update_fn()
         p.stepSimulation()
         time.sleep(1.0 / 240.0)
         step += 1
 
     return max_force >= force_threshold
+
+
+def attempt_attach_ball(robot_id, ball_id, end_effector_link, gripper_joints):
+    """检测夹爪与小球接触后，创建约束辅助抓取。"""
+    contacts = []
+    for joint_idx in gripper_joints:
+        contacts.extend(p.getContactPoints(bodyA=robot_id, bodyB=ball_id, linkIndexA=joint_idx))
+
+    if not contacts:
+        return None
+
+    constraint_id = p.createConstraint(
+        parentBodyUniqueId=robot_id,
+        parentLinkIndex=end_effector_link,
+        childBodyUniqueId=ball_id,
+        childLinkIndex=-1,
+        jointType=p.JOINT_FIXED,
+        jointAxis=[0, 0, 0],
+        parentFramePosition=[0, 0, 0],
+        childFramePosition=[0, 0, 0]
+    )
+    return constraint_id
 
 
 def create_camera_display():
@@ -437,6 +474,24 @@ def main():
                                    textColorRGB=[1, 0, 0], textSize=1.2)
         force_display_ids.append(text_id)
 
+    display_frame = {"count": 0}
+
+    def update_all_displays():
+        if not p.isConnected():
+            return
+        display_frame["count"] += 1
+        if display_frame["count"] % 5 == 0:
+            rgb_image = update_camera_view(robot_id, end_effector_link)
+            if rgb_image is not None:
+                p.addUserDebugText("Camera: Active", [0.5, 0.8, 0.9],
+                                 textColorRGB=[0, 1, 0], textSize=1.2,
+                                 replaceItemUniqueId=camera_display)
+            update_joint_display(robot_id, controllable_joints, joint_display_ids)
+            update_force_display(robot_id, gripper_joints, force_display_ids)
+
+    # 启动时先刷新一次显示
+    update_all_displays()
+
     print("=== 完整的机械臂抓取演示开始 ===")
 
     # 步骤0: 回到安全初始位置，确保未接触小球
@@ -456,16 +511,17 @@ def main():
     approach_pos = [ball_pos[0], ball_pos[1], ball_pos[2] + 0.1]  # 在球上方10cm
     approach_angles = get_joint_angles_for_position(robot_id, approach_pos)
     if approach_angles:
-        move_arm_to_position(robot_id, approach_angles[:len(controllable_joints)], controllable_joints)
+        move_arm_to_position(robot_id, approach_angles[:len(controllable_joints)],
+                             controllable_joints, update_fn=update_all_displays)
 
-    time.sleep(1)
+    step_simulation(120, update_fn=update_all_displays)
 
     # 步骤2: 张开夹爪
     print("步骤2: 张开夹爪...")
     p.addUserDebugText("Step 2: Opening gripper", [-0.5, 0, 0.95],
                      textColorRGB=[1, 1, 0], textSize=1.5, replaceItemUniqueId=status_id)
     open_gripper(robot_id, gripper_joints)
-    time.sleep(1)
+    step_simulation(120, update_fn=update_all_displays)
 
     # 步骤3: 下降到球的位置
     print("步骤3: 下降到球的位置...")
@@ -476,16 +532,22 @@ def main():
     grasp_pos = [ball_pos[0], ball_pos[1], ball_pos[2] + 0.03]  # 3cm above ball
     grasp_angles = get_joint_angles_for_position(robot_id, grasp_pos)
     if grasp_angles:
-        move_arm_to_position(robot_id, grasp_angles[:len(controllable_joints)], controllable_joints)
+        move_arm_to_position(robot_id, grasp_angles[:len(controllable_joints)],
+                             controllable_joints, update_fn=update_all_displays)
 
-    time.sleep(0.5)  # 等待稳定
+    step_simulation(60, update_fn=update_all_displays)
 
     # 步骤4: 闭合夹爪抓取
     print("步骤4: 闭合夹爪抓取...")
     p.addUserDebugText("Step 4: Closing gripper to grasp", [-0.5, 0, 0.95],
                      textColorRGB=[1, 1, 0], textSize=1.5, replaceItemUniqueId=status_id)
 
-    grasp_success = close_gripper(robot_id, gripper_joints, force_threshold=1.5)  # 降低阈值
+    attach_constraint = None
+    grasp_success = close_gripper(robot_id, gripper_joints, force_threshold=1.5,
+                                  update_fn=update_all_displays)  # 降低阈值
+    attach_constraint = attempt_attach_ball(robot_id, ball_id, end_effector_link, gripper_joints)
+    if attach_constraint is not None:
+        grasp_success = True
 
     if grasp_success:
         print("抓取成功！")
@@ -496,7 +558,7 @@ def main():
         p.addUserDebugText("Step 4: Continuing demo...", [-0.5, 0, 0.95],
                          textColorRGB=[1, 0.5, 0], textSize=1.5, replaceItemUniqueId=status_id)
 
-    time.sleep(2)
+    step_simulation(240, update_fn=update_all_displays)
 
     # 步骤5: 抬起球
     print("步骤5: 抬起球...")
@@ -506,9 +568,10 @@ def main():
     lift_pos = [ball_pos[0], ball_pos[1], ball_pos[2] + 0.15]  # 抬起到15cm高度
     lift_angles = get_joint_angles_for_position(robot_id, lift_pos)
     if lift_angles:
-        move_arm_to_position(robot_id, lift_angles[:len(controllable_joints)], controllable_joints)
+        move_arm_to_position(robot_id, lift_angles[:len(controllable_joints)],
+                             controllable_joints, update_fn=update_all_displays)
 
-    time.sleep(1)
+    step_simulation(120, update_fn=update_all_displays)
 
     # 步骤6: 移动到箱子上方
     print("步骤6: 移动到箱子上方...")
@@ -518,9 +581,10 @@ def main():
     box_above_pos = [box_base_pos[0], box_base_pos[1], 0.25]
     new_angles = get_joint_angles_for_position(robot_id, box_above_pos)
     if new_angles:
-        move_arm_to_position(robot_id, new_angles[:len(controllable_joints)], controllable_joints)
+        move_arm_to_position(robot_id, new_angles[:len(controllable_joints)],
+                             controllable_joints, update_fn=update_all_displays)
 
-    time.sleep(1)
+    step_simulation(120, update_fn=update_all_displays)
 
     # 步骤7: 下降到箱子内部
     print("步骤7: 下降到箱子内部...")
@@ -540,7 +604,9 @@ def main():
                      textColorRGB=[1, 1, 0], textSize=1.5, replaceItemUniqueId=status_id)
 
     open_gripper(robot_id, gripper_joints)
-    time.sleep(2)
+    if attach_constraint is not None:
+        p.removeConstraint(attach_constraint)
+    step_simulation(240, update_fn=update_all_displays)
 
     # 步骤9: 返回初始位置
     print("步骤9: 返回初始位置...")
@@ -558,23 +624,8 @@ def main():
     frame_count = 0
     while p.isConnected():
         frame_count += 1
-
-        # 每帧更新摄像头视图
-        if frame_count % 5 == 0:  # 每5帧更新一次摄像头
-            rgb_image = update_camera_view(robot_id, end_effector_link)
-            if rgb_image is not None:
-                p.addUserDebugText("Camera: Active", [0.5, 0.8, 0.9],
-                                 textColorRGB=[0, 1, 0], textSize=1.2,
-                                 replaceItemUniqueId=camera_display)
-
-        # 更新关节角度显示
-        if frame_count % 10 == 0:  # 每10帧更新一次关节显示
-            update_joint_display(robot_id, controllable_joints, joint_display_ids)
-
-        # 更新力反馈显示
-        if frame_count % 5 == 0:  # 每5帧更新一次力显示
-            update_force_display(robot_id, gripper_joints, force_display_ids)
-
+        if frame_count % 5 == 0:
+            update_all_displays()
         p.stepSimulation()
         time.sleep(1.0 / 240.0)
 
