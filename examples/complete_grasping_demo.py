@@ -501,9 +501,7 @@ def main():
     home_angles = [0.0] * len(controllable_joints)
     open_gripper(robot_id, gripper_joints)
     move_arm_to_position(robot_id, home_angles, controllable_joints)
-    update_all_displays()
     time.sleep(1)
-    update_all_displays()
 
     # 步骤1: 移动到球的上方准备位置
     print("步骤1: 移动到球的上方...")
