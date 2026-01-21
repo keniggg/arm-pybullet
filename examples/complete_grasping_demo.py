@@ -282,7 +282,43 @@ def update_force_display(robot_id, gripper_joints, force_display_ids):
                 textColorRGB=[1, 0, 0],
                 textSize=1.2,
                 replaceItemUniqueId=force_display_ids[i]
-            )
+            ) 
+
+
+def create_open_box(base_pos, inner_size=(0.18, 0.18), wall_height=0.12, wall_thickness=0.01,
+                    color=(0.7, 0.7, 0.9, 1.0)):
+    """创建一个开口箱子（底板+四面墙）。"""
+    half_x = inner_size[0] / 2
+    half_y = inner_size[1] / 2
+    half_t = wall_thickness / 2
+    half_h = wall_height / 2
+
+    shapes = [
+        # 底板
+        (p.GEOM_BOX, [half_x, half_y, half_t], [0, 0, wall_thickness / 2]),
+        # 前后墙
+        (p.GEOM_BOX, [half_x, half_t, half_h], [0, half_y + half_t, wall_thickness + half_h]),
+        (p.GEOM_BOX, [half_x, half_t, half_h], [0, -(half_y + half_t), wall_thickness + half_h]),
+        # 左右墙
+        (p.GEOM_BOX, [half_t, half_y, half_h], [half_x + half_t, 0, wall_thickness + half_h]),
+        (p.GEOM_BOX, [half_t, half_y, half_h], [-(half_x + half_t), 0, wall_thickness + half_h]),
+    ]
+
+    body_ids = []
+    for geom_type, half_extents, local_offset in shapes:
+        collision_shape = p.createCollisionShape(geom_type, halfExtents=half_extents)
+        visual_shape = p.createVisualShape(geom_type, halfExtents=half_extents, rgbaColor=color)
+        body_id = p.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=collision_shape,
+            baseVisualShapeIndex=visual_shape,
+            basePosition=[base_pos[0] + local_offset[0],
+                          base_pos[1] + local_offset[1],
+                          base_pos[2] + local_offset[2]]
+        )
+        body_ids.append(body_id)
+
+    return body_ids
 
 
 def main():
@@ -339,6 +375,10 @@ def main():
                     restitution=0.1,
                     contactDamping=1.0,
                     contactStiffness=300)
+
+    # 创建目标箱子
+    box_base_pos = [0.1, 0.3, 0.0]
+    create_open_box(base_pos=box_base_pos)
 
     # 获取关节信息
     num_joints = p.getNumJoints(robot_id)
@@ -398,6 +438,15 @@ def main():
         force_display_ids.append(text_id)
 
     print("=== 完整的机械臂抓取演示开始 ===")
+
+    # 步骤0: 回到安全初始位置，确保未接触小球
+    print("步骤0: 回到安全初始位置...")
+    p.addUserDebugText("Step 0: Moving to safe start", [-0.5, 0, 0.95],
+                     textColorRGB=[1, 1, 0], textSize=1.5, replaceItemUniqueId=status_id)
+    home_angles = [0.0] * len(controllable_joints)
+    open_gripper(robot_id, gripper_joints)
+    move_arm_to_position(robot_id, home_angles, controllable_joints)
+    time.sleep(1)
 
     # 步骤1: 移动到球的上方准备位置
     print("步骤1: 移动到球的上方...")
@@ -461,32 +510,43 @@ def main():
 
     time.sleep(1)
 
-    # 步骤6: 移动到新位置
-    print("步骤6: 移动到新位置...")
-    p.addUserDebugText("Step 6: Moving to new position", [-0.5, 0, 0.95],
+    # 步骤6: 移动到箱子上方
+    print("步骤6: 移动到箱子上方...")
+    p.addUserDebugText("Step 6: Moving above box", [-0.5, 0, 0.95],
                      textColorRGB=[1, 1, 0], textSize=1.5, replaceItemUniqueId=status_id)
 
-    new_pos = [0.1, 0.3, 0.2]  # 新位置
-    new_angles = get_joint_angles_for_position(robot_id, new_pos)
+    box_above_pos = [box_base_pos[0], box_base_pos[1], 0.25]
+    new_angles = get_joint_angles_for_position(robot_id, box_above_pos)
     if new_angles:
         move_arm_to_position(robot_id, new_angles[:len(controllable_joints)], controllable_joints)
 
     time.sleep(1)
 
-    # 步骤7: 放下球
-    print("步骤7: 放下球...")
-    p.addUserDebugText("Step 7: Releasing ball", [-0.5, 0, 0.95],
+    # 步骤7: 下降到箱子内部
+    print("步骤7: 下降到箱子内部...")
+    p.addUserDebugText("Step 7: Lowering into box", [-0.5, 0, 0.95],
+                     textColorRGB=[1, 1, 0], textSize=1.5, replaceItemUniqueId=status_id)
+
+    box_place_pos = [box_base_pos[0], box_base_pos[1], ball_radius + 0.02]
+    place_angles = get_joint_angles_for_position(robot_id, box_place_pos)
+    if place_angles:
+        move_arm_to_position(robot_id, place_angles[:len(controllable_joints)], controllable_joints)
+
+    time.sleep(0.5)
+
+    # 步骤8: 放下球
+    print("步骤8: 放下球...")
+    p.addUserDebugText("Step 8: Releasing ball", [-0.5, 0, 0.95],
                      textColorRGB=[1, 1, 0], textSize=1.5, replaceItemUniqueId=status_id)
 
     open_gripper(robot_id, gripper_joints)
     time.sleep(2)
 
-    # 步骤8: 返回初始位置
-    print("步骤8: 返回初始位置...")
-    p.addUserDebugText("Step 8: Returning to home", [-0.5, 0, 0.95],
+    # 步骤9: 返回初始位置
+    print("步骤9: 返回初始位置...")
+    p.addUserDebugText("Step 9: Returning to home", [-0.5, 0, 0.95],
                      textColorRGB=[1, 1, 0], textSize=1.5, replaceItemUniqueId=status_id)
 
-    home_angles = [0.0] * len(controllable_joints)
     move_arm_to_position(robot_id, home_angles, controllable_joints)
 
     p.addUserDebugText("Demo Complete! Close window to exit.", [-0.5, 0, 0.95],
